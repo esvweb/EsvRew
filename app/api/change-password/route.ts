@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import sql from '@/lib/db';
 import bcrypt from 'bcryptjs';
+
+export const dynamic = 'force-dynamic';
 import { z } from 'zod';
 
 const Schema = z.object({

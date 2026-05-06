@@ -3,6 +3,8 @@ import { z } from 'zod';
 import sql from '@/lib/db';
 import { sendDeleteAlert } from '@/lib/email';
 
+export const dynamic = 'force-dynamic';
+
 const ReviewSchema = z.object({
   review_id: z.string(),
   reviewer_name: z.string().optional(),
