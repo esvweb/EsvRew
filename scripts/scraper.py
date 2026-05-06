@@ -44,7 +44,7 @@ async def scrape_reviews() -> list[dict]:
         page = await context.new_page()
 
         print(f"Navigating to: {MAPS_URL}")
-        await page.goto(MAPS_URL, wait_until="networkidle", timeout=60000)
+        await page.goto(MAPS_URL, wait_until="load", timeout=90000)
         await random_delay(2, 4)
 
         # Handle cookie consent popup
