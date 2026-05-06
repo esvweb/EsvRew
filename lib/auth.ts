@@ -41,6 +41,21 @@ export const authOptions: NextAuthOptions = {
         token.role = (user as { role: string }).role;
         token.mustChangePassword = (user as { mustChangePassword: boolean }).mustChangePassword;
       }
+      // Re-read mustChangePassword from DB on every token refresh
+      // so password change takes effect without re-login
+      if (token.email) {
+        try {
+          const rows = await sql`
+            SELECT must_change_password, role FROM users WHERE email = ${token.email as string}
+          `;
+          if (rows.length > 0) {
+            token.mustChangePassword = rows[0].must_change_password;
+            token.role = rows[0].role;
+          }
+        } catch {
+          // keep existing token values on DB error
+        }
+      }
       return token;
     },
     async session({ session, token }) {

@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { signOut } from 'next-auth/react';
 
 export default function ChangePasswordPage() {
   const [password, setPassword] = useState('');
@@ -39,8 +38,9 @@ export default function ChangePasswordPage() {
       return;
     }
 
-    await signOut({ redirect: false });
-    router.push('/login');
+    // DB is updated; JWT callback will re-read mustChangePassword on next refresh
+    router.push('/dashboard');
+    router.refresh();
   }
 
   return (
