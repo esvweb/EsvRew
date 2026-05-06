@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files
 .env*.local
+scripts/.env
 
 # scripts output
 .scripts-out/
