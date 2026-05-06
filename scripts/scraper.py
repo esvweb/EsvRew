@@ -13,9 +13,7 @@ load_dotenv()
 
 APP_URL = os.environ.get("NEXT_PUBLIC_APP_URL", "http://localhost:3000")
 SCRAPER_SECRET = os.environ.get("SCRAPER_SECRET", "")
-MAPS_URL = os.environ.get(
-    "GOOGLE_MAPS_URL", "https://maps.app.goo.gl/4nwAXYF4s1iUMhYMA"
-)
+MAPS_URL = os.environ.get("GOOGLE_MAPS_URL", "https://maps.app.goo.gl/4nwAXYF4s1iUMhYMA")
 
 
 def make_review_id(name: str, rating: int, text: str) -> str:
@@ -52,14 +50,14 @@ async def go_to_reviews_tab(page: Page):
     for sel in [
         'button[aria-label*="Yorumlar"]',
         'button[aria-label*="Reviews"]',
-        '[role="tab"]:nth-child(2)',
         'button[data-tab-index="1"]',
+        '[role="tab"]:nth-child(2)',
     ]:
         try:
             tab = page.locator(sel).first
             if await tab.is_visible(timeout=2000):
                 await tab.click()
-                await asyncio.sleep(2)
+                await asyncio.sleep(2.5)
                 print("Clicked reviews tab")
                 return
         except Exception:
@@ -67,181 +65,115 @@ async def go_to_reviews_tab(page: Page):
 
 
 async def find_scroll_container(page: Page):
-    candidates = [
-        'div[aria-label*="Yorumlar"][role="main"]',
-        'div[aria-label*="Reviews"][role="main"]',
+    for sel in [
         'div.m6QErb.DxyBCb',
         'div.m6QErb[data-tab-index="1"]',
+        'div[aria-label*="Yorumlar"][role="main"]',
+        'div[aria-label*="Reviews"][role="main"]',
         'div.m6QErb',
         'div[role="feed"]',
-    ]
-    for sel in candidates:
+    ]:
         try:
             el = page.locator(sel).first
-            if await el.is_visible(timeout=1000):
-                count = await el.evaluate("el => el.scrollHeight")
-                if count > 100:
+            if await el.is_visible(timeout=800):
+                h = await el.evaluate("el => el.scrollHeight")
+                if h and h > 200:
                     return el
         except Exception:
             pass
     return None
 
 
-async def scroll_all_reviews(page: Page) -> int:
-    container = await find_scroll_container(page)
-    last_count = 0
-    no_change = 0
-    max_scrolls = 300
-
-    for i in range(max_scrolls):
-        # Scroll the container or the page
-        if container:
-            try:
-                await container.evaluate("el => { el.scrollTop += el.clientHeight * 0.8; }")
-            except Exception:
-                await page.keyboard.press("End")
-        else:
-            await page.keyboard.press("End")
-
-        await random_delay(1.5, 2.5)
-
-        # Count visible review cards
-        count = await page.locator(
-            'div.jftiEf, div[data-review-id], div[jscontroller="MZnM8e"]'
-        ).count()
-
-        if count != last_count:
-            no_change = 0
-            last_count = count
-            print(f"Scroll {i + 1}: {count} reviews loaded")
-        else:
-            no_change += 1
-            if no_change >= 6:
-                print(f"No new reviews after scroll {i + 1}. Done.")
-                break
-
-    return last_count
-
-
-async def expand_review_texts(page: Page):
-    for sel in [
-        'button.w8nwRe',
-        'button[aria-label*="Daha fazla"]',
-        'button[aria-label*="See more"]',
-        'button[jsaction*="pane.review.expandReview"]',
-    ]:
-        btns = page.locator(sel)
-        count = await btns.count()
-        for i in range(min(count, 1000)):
-            try:
-                btn = btns.nth(i)
-                if await btn.is_visible(timeout=200):
-                    await btn.click()
-                    await asyncio.sleep(0.15)
-            except Exception:
-                pass
-
-
-async def extract_reviews(page: Page) -> list[dict]:
+async def extract_visible_reviews(page: Page) -> list[dict]:
+    """Extract all currently visible review cards from the DOM."""
     reviews = []
-    seen_ids: set[str] = set()
 
-    # Try multiple selectors for review containers
-    for container_sel in [
-        'div.jftiEf',
-        'div[data-review-id]',
-        'div[jscontroller="MZnM8e"]',
-    ]:
-        elements = page.locator(container_sel)
+    elements = page.locator('div.jftiEf')
+    total = await elements.count()
+    if total == 0:
+        elements = page.locator('div[data-review-id]')
         total = await elements.count()
-        if total == 0:
-            continue
+    if total == 0:
+        return reviews
 
-        print(f"Extracting with selector '{container_sel}': {total} elements")
+    for i in range(total):
+        try:
+            el = elements.nth(i)
 
-        for i in range(total):
-            try:
-                el = elements.nth(i)
-
-                # Reviewer name
-                name = "Anonim"
-                for name_sel in [
-                    'div.d4r55',
-                    'button[data-tab-index="-1"] div.d4r55',
-                    '.x3AX1-LfntMc-header-title-ij8cu',
-                    'span[class*="d4r55"]',
-                    'div[class*="fontHeadlineSmall"]',
-                ]:
-                    try:
-                        n = el.locator(name_sel).first
-                        if await n.count() > 0:
-                            txt = (await n.inner_text()).strip()
-                            if txt:
-                                name = txt
-                                break
-                    except Exception:
-                        pass
-
-                # Star rating from aria-label
-                rating = 5
-                for star_sel in [
-                    'span[role="img"][aria-label]',
-                    'span.kvMYJc',
-                    'div.DU9Pgb span[role="img"]',
-                ]:
-                    try:
-                        s = el.locator(star_sel).first
-                        if await s.count() > 0:
-                            label = (await s.get_attribute("aria-label")) or ""
-                            for n in range(1, 6):
-                                if str(n) in label[:3]:
-                                    rating = n
-                                    break
+            # Reviewer name
+            name = "Anonim"
+            for sel in ['div.d4r55', 'span.d4r55', 'div[class*="fontHeadlineSmall"]']:
+                try:
+                    n = el.locator(sel).first
+                    if await n.count() > 0:
+                        t = (await n.inner_text()).strip()
+                        if t:
+                            name = t
                             break
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
 
-                # Review text
-                text = ""
-                for text_sel in [
-                    'span.wiI7pd',
-                    'div[data-expandable-section] span',
-                    'span[jsname="bN97Pc"]',
-                    'div.Jtu6Td span',
-                ]:
-                    try:
-                        t = el.locator(text_sel).first
-                        if await t.count() > 0:
-                            txt = (await t.inner_text()).strip()
-                            if txt:
-                                text = txt
+            # Star rating
+            rating = 5
+            for sel in ['span[role="img"][aria-label]', 'span.kvMYJc']:
+                try:
+                    s = el.locator(sel).first
+                    if await s.count() > 0:
+                        label = (await s.get_attribute("aria-label")) or ""
+                        for n in range(1, 6):
+                            if str(n) in label[:4]:
+                                rating = n
                                 break
-                    except Exception:
-                        pass
+                        break
+                except Exception:
+                    pass
 
-                rid = make_review_id(name, rating, text)
-                if rid in seen_ids:
-                    continue
-                seen_ids.add(rid)
+            # Review text (empty string is fine — star-only reviews are valid)
+            text = ""
+            for sel in ['span.wiI7pd', 'span[jsname="bN97Pc"]', 'div.Jtu6Td span']:
+                try:
+                    t = el.locator(sel).first
+                    if await t.count() > 0:
+                        txt = (await t.inner_text()).strip()
+                        if txt:
+                            text = txt
+                            break
+                except Exception:
+                    pass
 
-                reviews.append({
-                    "review_id": rid,
-                    "reviewer_name": name,
-                    "rating": rating,
-                    "review_text": text,
-                })
+            rid = make_review_id(name, rating, text)
+            reviews.append({
+                "review_id": rid,
+                "reviewer_name": name,
+                "rating": rating,
+                "review_text": text,
+            })
 
-            except Exception as e:
-                print(f"  Error on review {i}: {e}")
-                continue
-
-        if reviews:
-            break  # found reviews with this selector, stop trying others
+        except Exception as e:
+            print(f"  Extraction error on card {i}: {e}")
+            continue
 
     return reviews
 
 
+async def expand_visible_texts(page: Page):
+    """Click 'Daha fazla' buttons on currently visible reviews."""
+    for sel in ['button.w8nwRe', 'button[aria-label*="Daha fazla"]', 'button[aria-label*="See more"]']:
+        btns = page.locator(sel)
+        count = await btns.count()
+        for i in range(count):
+            try:
+                btn = btns.nth(i)
+                if await btn.is_visible(timeout=150):
+                    await btn.click()
+                    await asyncio.sleep(0.1)
+            except Exception:
+                pass
+
+
 async def scrape_reviews() -> list[dict]:
+    all_reviews: dict[str, dict] = {}  # review_id → data (dedup across scrolls)
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -261,21 +193,58 @@ async def scrape_reviews() -> list[dict]:
 
         await dismiss_consent(page)
         await random_delay(1, 2)
-
         await go_to_reviews_tab(page)
         await random_delay(2, 3)
 
-        print("Scrolling to load all reviews...")
-        await scroll_all_reviews(page)
+        container = await find_scroll_container(page)
+        if container:
+            print("Found scrollable reviews panel")
+        else:
+            print("No scroll container found, using keyboard scroll")
 
-        print("Expanding truncated review texts...")
-        await expand_review_texts(page)
-        await asyncio.sleep(1)
+        no_new_count = 0
+        scroll_num = 0
+        max_scrolls = 500
 
-        reviews = await extract_reviews(page)
+        while scroll_num < max_scrolls:
+            scroll_num += 1
+
+            # Expand truncated texts before extracting
+            await expand_visible_texts(page)
+
+            # Extract currently visible reviews
+            batch = await extract_visible_reviews(page)
+            new_this_batch = 0
+            for r in batch:
+                if r["review_id"] not in all_reviews:
+                    all_reviews[r["review_id"]] = r
+                    new_this_batch += 1
+
+            total_so_far = len(all_reviews)
+
+            if new_this_batch > 0:
+                no_new_count = 0
+                print(f"Scroll {scroll_num}: +{new_this_batch} new → {total_so_far} total")
+            else:
+                no_new_count += 1
+                if no_new_count >= 5:
+                    print(f"No new reviews for 5 consecutive scrolls. Done at {total_so_far}.")
+                    break
+
+            # Scroll down
+            if container:
+                try:
+                    await container.evaluate("el => el.scrollBy(0, el.clientHeight * 0.7)")
+                except Exception:
+                    await page.keyboard.press("End")
+            else:
+                await page.keyboard.press("End")
+
+            await random_delay(1.5, 2.5)
+
         await browser.close()
 
-    return reviews
+    return list(all_reviews.values())
 
 
 async def post_to_api(reviews: list[dict]) -> dict:
@@ -290,7 +259,7 @@ async def post_to_api(reviews: list[dict]) -> dict:
                 "Authorization": f"Bearer {SCRAPER_SECRET}",
                 "Content-Type": "application/json",
             },
-            timeout=aiohttp.ClientTimeout(total=60),
+            timeout=aiohttp.ClientTimeout(total=120),
         ) as resp:
             if resp.status != 200:
                 text = await resp.text()
@@ -303,15 +272,17 @@ async def main():
     start = time.time()
 
     reviews = await scrape_reviews()
-    print(f"\nCollected {len(reviews)} unique reviews in {time.time() - start:.1f}s")
+    elapsed = time.time() - start
+    print(f"\nCollected {len(reviews)} unique reviews in {elapsed:.1f}s")
 
     if not reviews:
         print("No reviews found. Exiting.")
         return
 
-    # Show sample
+    print("Sample:")
     for r in reviews[:3]:
-        print(f"  [{r['rating']}★] {r['reviewer_name']}: {r['review_text'][:60]}")
+        text_preview = r["review_text"][:60] if r["review_text"] else "(yıldız yorumu)"
+        print(f"  [{r['rating']}★] {r['reviewer_name']}: {text_preview}")
 
     try:
         result = await post_to_api(reviews)
