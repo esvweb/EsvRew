@@ -61,8 +61,10 @@ export async function POST(req: NextRequest) {
         ON CONFLICT (review_id) DO UPDATE SET last_seen_date = ${today}, status = 'online'
       `;
     } else {
+      // Also restore status to 'online' in case it was previously falsely marked deleted
       await sql`
-        UPDATE reviews SET last_seen_date = ${today} WHERE review_id = ${review.review_id}
+        UPDATE reviews SET last_seen_date = ${today}, status = 'online', deleted_date = NULL
+        WHERE review_id = ${review.review_id}
       `;
     }
   }
