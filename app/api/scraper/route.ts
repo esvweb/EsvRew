@@ -44,7 +44,14 @@ export async function POST(req: NextRequest) {
   const yesterdayIds: string[] = yesterdaySnapshot.length > 0 ? yesterdaySnapshot[0].review_ids : [];
 
   const newIds = todayIds.filter(id => !yesterdayIds.includes(id));
-  const deletedIds = yesterdayIds.filter(id => !todayIds.includes(id));
+
+  // Safety: if today's count is <70% of yesterday's, scraper likely missed reviews.
+  // Don't mark deletions to avoid false positives.
+  const suspiciouslyLow = yesterdayIds.length > 20 && todayIds.length < yesterdayIds.length * 0.7;
+  const deletedIds = suspiciouslyLow ? [] : yesterdayIds.filter(id => !todayIds.includes(id));
+  if (suspiciouslyLow) {
+    console.warn(`Skipping deletion check: today=${todayIds.length}, yesterday=${yesterdayIds.length}`);
+  }
 
   for (const review of reviews) {
     if (newIds.includes(review.review_id)) {

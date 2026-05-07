@@ -198,19 +198,20 @@ async def scrape_reviews() -> list[dict]:
 
         container = await find_scroll_container(page)
         if container:
-            print("Found scrollable reviews panel")
+            info = await container.evaluate(
+                "el => ({sh: el.scrollHeight, ch: el.clientHeight, st: el.scrollTop})"
+            )
+            print(f"Scroll container: scrollHeight={info['sh']} clientHeight={info['ch']}")
         else:
             print("No scroll container found, using keyboard scroll")
 
         no_new_count = 0
         scroll_num = 0
-        max_scrolls = 500
+        max_scrolls = 600
+        SCROLL_PX = 800  # fixed pixel step — avoids tiny clientHeight issues
 
         while scroll_num < max_scrolls:
             scroll_num += 1
-
-            # Expand truncated texts before extracting
-            await expand_visible_texts(page)
 
             # Extract currently visible reviews
             batch = await extract_visible_reviews(page)
@@ -227,20 +228,31 @@ async def scrape_reviews() -> list[dict]:
                 print(f"Scroll {scroll_num}: +{new_this_batch} new → {total_so_far} total")
             else:
                 no_new_count += 1
-                if no_new_count >= 5:
-                    print(f"No new reviews for 5 consecutive scrolls. Done at {total_so_far}.")
+                if no_new_count == 4:
+                    # Pause — Google Maps may still be loading the next AJAX batch
+                    print(f"  Waiting for next batch to load... ({total_so_far} so far)")
+                    await asyncio.sleep(4)
+                if no_new_count >= 12:
+                    print(f"No new reviews for 12 scrolls. Done at {total_so_far}.")
                     break
 
-            # Scroll down
+            # Scroll using fixed pixel amount on container AND page
+            scrolled = False
             if container:
                 try:
-                    await container.evaluate("el => el.scrollBy(0, el.clientHeight * 0.7)")
+                    prev = await container.evaluate("el => el.scrollTop")
+                    await container.evaluate(f"el => el.scrollTop += {SCROLL_PX}")
+                    after = await container.evaluate("el => el.scrollTop")
+                    if after > prev:
+                        scrolled = True
                 except Exception:
-                    await page.keyboard.press("End")
-            else:
-                await page.keyboard.press("End")
+                    pass
 
-            await random_delay(1.5, 2.5)
+            if not scrolled:
+                # Fallback: scroll the page itself
+                await page.evaluate(f"window.scrollBy(0, {SCROLL_PX})")
+
+            await random_delay(0.8, 1.5)
 
         await browser.close()
 
