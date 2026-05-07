@@ -128,6 +128,21 @@ async def extract_visible_reviews(page: Page) -> list[dict]:
                 except Exception:
                     pass
 
+            # Click "See original" if review was auto-translated
+            for orig_sel in [
+                'button[aria-label*="See original"]',
+                'button[aria-label*="Orijinali gör"]',
+                'button.kyuRq',
+            ]:
+                try:
+                    orig_btn = el.locator(orig_sel).first
+                    if await orig_btn.count() > 0 and await orig_btn.is_visible(timeout=200):
+                        await orig_btn.click()
+                        await asyncio.sleep(0.2)
+                        break
+                except Exception:
+                    pass
+
             # Review text (empty string is fine — star-only reviews are valid)
             text = ""
             for sel in ['span.wiI7pd', 'span[jsname="bN97Pc"]', 'div.Jtu6Td span']:
@@ -177,7 +192,7 @@ async def scrape_reviews() -> list[dict]:
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
-            locale="tr-TR",
+            locale="en-US",  # neutral locale — avoids auto-translation of reviews
             viewport={"width": 1280, "height": 900},
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
