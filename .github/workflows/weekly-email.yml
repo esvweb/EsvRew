@@ -2,7 +2,7 @@ name: Weekly Review Summary Email
 
 on:
   schedule:
-    - cron: '0 7 * * 1'
+    - cron: '0 9 * * 1'  # 12:00 Istanbul (UTC+3) — 5h after scraper starts
   workflow_dispatch:
 
 jobs:
