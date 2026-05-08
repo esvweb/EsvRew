@@ -94,12 +94,12 @@ async def extract_reviews_from_page(page: Page) -> list[dict]:
                 raw = (await text_el.inner_text()).strip()
                 # Remove "See more" suffix if present
                 raw = re.sub(r'\s*See more\s*$', '', raw).strip()
-                # Skip lorem ipsum placeholder (flagged reviews)
-                if raw and 'lorem ipsum' not in raw.lower():
+                # Keep text unless it's lorem ipsum placeholder — store empty string instead
+                if 'lorem ipsum' not in raw.lower():
                     text = raw
 
-            # Skip if name is still default and no useful data
-            if name == 'Anonim' and not text:
+            # Skip only if we couldn't identify the reviewer at all
+            if name == 'Anonim' and rating == 5 and not text:
                 continue
 
             rid = make_review_id(name, rating)
@@ -147,6 +147,7 @@ async def scrape_reviews() -> list[dict]:
             if page_num > 1:
                 url = f"{TP_URL}?page={page_num}"
                 await page.goto(url, wait_until='domcontentloaded', timeout=60000)
+                await dismiss_cookie(page)  # may reappear on page navigation
                 await random_delay(1.5, 2.5)
 
             batch = await extract_reviews_from_page(page)
