@@ -20,7 +20,8 @@ export async function sendDeleteAlert(deletedReviews: {
   reviewer_name: string;
   rating: number;
   review_text: string;
-}[], onlineCount: number, deletedCount: number) {
+}[], onlineCount: number, deletedCount: number, platform: string = 'google') {
+  const platformLabel = platform === 'trustpilot' ? 'Trustpilot' : 'Google';
   const recipients = await getAllUserEmails();
   if (recipients.length === 0) return;
 
@@ -47,7 +48,7 @@ export async function sendDeleteAlert(deletedReviews: {
     <body style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;background:#f9f9f9;">
       <div style="background:#fff;border-radius:8px;padding:30px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
         <div style="border-left:4px solid #ef4444;padding-left:16px;margin-bottom:24px;">
-          <h2 style="color:#ef4444;margin:0 0 4px 0;">⚠️ Yorum Silindi Uyarısı</h2>
+          <h2 style="color:#ef4444;margin:0 0 4px 0;">⚠️ ${platformLabel} Yorumu Silindi Uyarısı</h2>
           <p style="color:#666;margin:0;">Esvita Clinic — ${today}</p>
         </div>
 
@@ -85,7 +86,7 @@ export async function sendDeleteAlert(deletedReviews: {
   await transporter.sendMail({
     from: `"${process.env.BREVO_FROM_NAME}" <${process.env.BREVO_FROM_EMAIL}>`,
     to: recipients.join(','),
-    subject: `⚠️ Esvita Clinic — ${deletedReviews.length} yorum silindi`,
+    subject: `⚠️ Esvita Clinic — ${platformLabel}: ${deletedReviews.length} yorum silindi`,
     html,
   });
 }

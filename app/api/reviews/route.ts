@@ -1,71 +1,77 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import sql from '@/lib/db';
+import { neon } from '@neondatabase/serverless';
 
 export const dynamic = 'force-dynamic';
+
+type Row = Record<string, unknown>;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function query(db: any, text: string, params: (string | number)[]): Promise<Row[]> {
+  const result = await db.query(text, params);
+  return (result.rows ?? result) as Row[];
+}
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = neon(process.env.DATABASE_URL!) as any;
   const { searchParams } = req.nextUrl;
   const status = searchParams.get('status') || '';
   const rating = searchParams.get('rating') || '';
   const search = searchParams.get('search') || '';
+  const platform = searchParams.get('platform') || '';
   const page = Math.max(1, Number(searchParams.get('page') || '1'));
   const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') || '50')));
   const offset = (page - 1) * limit;
 
-  let reviews: Record<string, unknown>[];
-  let totalCount: number;
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+  let idx = 1;
 
-  const statusFilter = status === 'online' || status === 'deleted' ? status : null;
-  const ratingFilter = rating && !isNaN(Number(rating)) ? Number(rating) : null;
-  const searchFilter = search ? `%${search}%` : null;
-
-  if (statusFilter && ratingFilter && searchFilter) {
-    reviews = await sql`SELECT * FROM reviews WHERE status = ${statusFilter} AND rating = ${ratingFilter} AND (reviewer_name ILIKE ${searchFilter} OR review_text ILIKE ${searchFilter}) ORDER BY first_seen_date DESC LIMIT ${limit} OFFSET ${offset}`;
-    const r = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = ${statusFilter} AND rating = ${ratingFilter} AND (reviewer_name ILIKE ${searchFilter} OR review_text ILIKE ${searchFilter})`;
-    totalCount = Number(r[0].c);
-  } else if (statusFilter && ratingFilter) {
-    reviews = await sql`SELECT * FROM reviews WHERE status = ${statusFilter} AND rating = ${ratingFilter} ORDER BY first_seen_date DESC LIMIT ${limit} OFFSET ${offset}`;
-    const r = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = ${statusFilter} AND rating = ${ratingFilter}`;
-    totalCount = Number(r[0].c);
-  } else if (statusFilter && searchFilter) {
-    reviews = await sql`SELECT * FROM reviews WHERE status = ${statusFilter} AND (reviewer_name ILIKE ${searchFilter} OR review_text ILIKE ${searchFilter}) ORDER BY first_seen_date DESC LIMIT ${limit} OFFSET ${offset}`;
-    const r = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = ${statusFilter} AND (reviewer_name ILIKE ${searchFilter} OR review_text ILIKE ${searchFilter})`;
-    totalCount = Number(r[0].c);
-  } else if (ratingFilter && searchFilter) {
-    reviews = await sql`SELECT * FROM reviews WHERE rating = ${ratingFilter} AND (reviewer_name ILIKE ${searchFilter} OR review_text ILIKE ${searchFilter}) ORDER BY first_seen_date DESC LIMIT ${limit} OFFSET ${offset}`;
-    const r = await sql`SELECT COUNT(*) as c FROM reviews WHERE rating = ${ratingFilter} AND (reviewer_name ILIKE ${searchFilter} OR review_text ILIKE ${searchFilter})`;
-    totalCount = Number(r[0].c);
-  } else if (statusFilter) {
-    reviews = await sql`SELECT * FROM reviews WHERE status = ${statusFilter} ORDER BY first_seen_date DESC LIMIT ${limit} OFFSET ${offset}`;
-    const r = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = ${statusFilter}`;
-    totalCount = Number(r[0].c);
-  } else if (ratingFilter) {
-    reviews = await sql`SELECT * FROM reviews WHERE rating = ${ratingFilter} ORDER BY first_seen_date DESC LIMIT ${limit} OFFSET ${offset}`;
-    const r = await sql`SELECT COUNT(*) as c FROM reviews WHERE rating = ${ratingFilter}`;
-    totalCount = Number(r[0].c);
-  } else if (searchFilter) {
-    reviews = await sql`SELECT * FROM reviews WHERE reviewer_name ILIKE ${searchFilter} OR review_text ILIKE ${searchFilter} ORDER BY first_seen_date DESC LIMIT ${limit} OFFSET ${offset}`;
-    const r = await sql`SELECT COUNT(*) as c FROM reviews WHERE reviewer_name ILIKE ${searchFilter} OR review_text ILIKE ${searchFilter}`;
-    totalCount = Number(r[0].c);
-  } else {
-    reviews = await sql`SELECT * FROM reviews ORDER BY first_seen_date DESC LIMIT ${limit} OFFSET ${offset}`;
-    const r = await sql`SELECT COUNT(*) as c FROM reviews`;
-    totalCount = Number(r[0].c);
+  if (status === 'online' || status === 'deleted') {
+    conditions.push(`status = $${idx++}`);
+    params.push(status);
+  }
+  if (rating && !isNaN(Number(rating))) {
+    conditions.push(`rating = $${idx++}`);
+    params.push(Number(rating));
+  }
+  if (search) {
+    conditions.push(`(reviewer_name ILIKE $${idx} OR review_text ILIKE $${idx})`);
+    params.push(`%${search}%`);
+    idx++;
+  }
+  if (platform === 'google' || platform === 'trustpilot') {
+    conditions.push(`platform = $${idx++}`);
+    params.push(platform);
   }
 
-  const onlineCount = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = 'online'`;
-  const deletedCount = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = 'deleted'`;
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const countRows = await query(db, `SELECT COUNT(*) as c FROM reviews ${where}`, params);
+  const total = Number(countRows[0]?.c ?? 0);
+
+  const reviews = await query(
+    db,
+    `SELECT * FROM reviews ${where} ORDER BY first_seen_date DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+    [...params, limit, offset]
+  );
+
+  const pf = platform === 'google' || platform === 'trustpilot' ? platform : null;
+  const pfWhere = pf ? `AND platform = $1` : '';
+
+  const onlineRows = await query(db, `SELECT COUNT(*) as c FROM reviews WHERE status = 'online' ${pfWhere}`, pf ? [pf] : []);
+  const deletedRows = await query(db, `SELECT COUNT(*) as c FROM reviews WHERE status = 'deleted' ${pfWhere}`, pf ? [pf] : []);
 
   return NextResponse.json({
     reviews,
-    total: totalCount,
-    online_count: Number(onlineCount[0].c),
-    deleted_count: Number(deletedCount[0].c),
-    pages: Math.ceil(totalCount / limit),
+    total,
+    online_count: Number(onlineRows[0]?.c ?? 0),
+    deleted_count: Number(deletedRows[0]?.c ?? 0),
+    pages: Math.ceil(total / limit),
   });
 }

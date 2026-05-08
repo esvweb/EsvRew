@@ -15,6 +15,7 @@ const ReviewSchema = z.object({
 const BodySchema = z.object({
   reviews: z.array(ReviewSchema),
   snapshot_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  platform: z.enum(['google', 'trustpilot']).default('google'),
 });
 
 export async function POST(req: NextRequest) {
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid body', details: parsed.error }, { status: 400 });
   }
 
-  const { reviews, snapshot_date } = parsed.data;
+  const { reviews, snapshot_date, platform } = parsed.data;
   const today = snapshot_date;
 
   const yesterday = new Date(today);
@@ -37,7 +38,8 @@ export async function POST(req: NextRequest) {
   const yesterdayStr = yesterday.toISOString().split('T')[0];
 
   const yesterdaySnapshot = await sql`
-    SELECT review_ids FROM daily_snapshots WHERE snapshot_date = ${yesterdayStr}
+    SELECT review_ids FROM daily_snapshots
+    WHERE snapshot_date = ${yesterdayStr} AND platform = ${platform}
   `;
 
   const todayIds = reviews.map(r => r.review_id);
@@ -45,23 +47,20 @@ export async function POST(req: NextRequest) {
 
   const newIds = todayIds.filter(id => !yesterdayIds.includes(id));
 
-  // Safety: if today's count is <70% of yesterday's, scraper likely missed reviews.
-  // Don't mark deletions to avoid false positives.
   const suspiciouslyLow = yesterdayIds.length > 20 && todayIds.length < yesterdayIds.length * 0.7;
   const deletedIds = suspiciouslyLow ? [] : yesterdayIds.filter(id => !todayIds.includes(id));
   if (suspiciouslyLow) {
-    console.warn(`Skipping deletion check: today=${todayIds.length}, yesterday=${yesterdayIds.length}`);
+    console.warn(`Skipping deletion check [${platform}]: today=${todayIds.length}, yesterday=${yesterdayIds.length}`);
   }
 
   for (const review of reviews) {
     if (newIds.includes(review.review_id)) {
       await sql`
-        INSERT INTO reviews (review_id, reviewer_name, rating, review_text, first_seen_date, last_seen_date, status)
-        VALUES (${review.review_id}, ${review.reviewer_name ?? null}, ${review.rating}, ${review.review_text ?? null}, ${today}, ${today}, 'online')
+        INSERT INTO reviews (review_id, reviewer_name, rating, review_text, first_seen_date, last_seen_date, status, platform)
+        VALUES (${review.review_id}, ${review.reviewer_name ?? null}, ${review.rating}, ${review.review_text ?? null}, ${today}, ${today}, 'online', ${platform})
         ON CONFLICT (review_id) DO UPDATE SET last_seen_date = ${today}, status = 'online'
       `;
     } else {
-      // Also restore status to 'online' in case it was previously falsely marked deleted
       await sql`
         UPDATE reviews SET last_seen_date = ${today}, status = 'online', deleted_date = NULL
         WHERE review_id = ${review.review_id}
@@ -77,23 +76,25 @@ export async function POST(req: NextRequest) {
   }
 
   await sql`
-    INSERT INTO daily_snapshots (snapshot_date, review_ids, total_count)
-    VALUES (${today}, ${todayIds}, ${todayIds.length})
-    ON CONFLICT (snapshot_date) DO UPDATE SET review_ids = ${todayIds}, total_count = ${todayIds.length}
+    INSERT INTO daily_snapshots (snapshot_date, review_ids, total_count, platform)
+    VALUES (${today}, ${todayIds}, ${todayIds.length}, ${platform})
+    ON CONFLICT (snapshot_date, platform) DO UPDATE
+    SET review_ids = ${todayIds}, total_count = ${todayIds.length}
   `;
 
   if (deletedIds.length > 0) {
     const deletedRows = await sql`
       SELECT reviewer_name, rating, review_text FROM reviews WHERE review_id = ANY(${deletedIds})
     `;
-    const onlineCount = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = 'online'`;
-    const deletedCount = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = 'deleted'`;
+    const onlineCount = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = 'online' AND platform = ${platform}`;
+    const deletedCount = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = 'deleted' AND platform = ${platform}`;
 
     try {
       await sendDeleteAlert(
         deletedRows as { reviewer_name: string; rating: number; review_text: string }[],
         Number(onlineCount[0].c),
-        Number(deletedCount[0].c)
+        Number(deletedCount[0].c),
+        platform
       );
     } catch (e) {
       console.error('Email send failed:', e);
@@ -104,5 +105,6 @@ export async function POST(req: NextRequest) {
     new: newIds.length,
     deleted: deletedIds.length,
     total: todayIds.length,
+    platform,
   });
 }

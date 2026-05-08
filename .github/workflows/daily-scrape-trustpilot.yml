@@ -1,0 +1,32 @@
+name: Daily Trustpilot Scrape
+
+on:
+  schedule:
+    - cron: '0 5 * * *'  # 08:00 Istanbul (UTC+3)
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install chromium --with-deps
+
+      - name: Run Trustpilot scraper
+        env:
+          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+          SCRAPER_SECRET: ${{ secrets.SCRAPER_SECRET }}
+          TRUSTPILOT_URL: https://www.trustpilot.com/review/esvitaclinic.com
+        run: python scripts/scraper_trustpilot.py
