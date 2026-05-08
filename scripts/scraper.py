@@ -17,7 +17,9 @@ MAPS_URL = os.environ.get("GOOGLE_MAPS_URL", "https://maps.app.goo.gl/4nwAXYF4s1
 
 
 def make_review_id(name: str, rating: int, text: str) -> str:
-    raw = f"{name}|{rating}|{text[:80]}"
+    # Use name + rating only — text excluded because it changes with locale/translation
+    # Google allows one review per person, so name+rating is a stable unique key
+    raw = f"{name}|{rating}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
