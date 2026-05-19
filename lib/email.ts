@@ -1,19 +1,39 @@
-import nodemailer from 'nodemailer';
 import sql from './db';
-
-const transporter = nodemailer.createTransport({
-  host: process.env.BREVO_SMTP_HOST,
-  port: Number(process.env.BREVO_SMTP_PORT),
-  secure: false,
-  auth: {
-    user: process.env.BREVO_SMTP_USER,
-    pass: process.env.BREVO_SMTP_KEY,
-  },
-});
 
 async function getAllUserEmails(): Promise<string[]> {
   const users = await sql`SELECT email FROM users`;
   return users.map((u) => (u as { email: string }).email);
+}
+
+async function sendEmail(to: string[], subject: string, html: string): Promise<void> {
+  const apiKey = process.env.BREVO_API_KEY;
+  const fromEmail = process.env.BREVO_FROM_EMAIL || 'info@esvitaclinic.com';
+  const fromName = process.env.BREVO_FROM_NAME || 'Esvita Review Monitor';
+
+  const payload = {
+    sender: { email: fromEmail, name: fromName },
+    to: to.map(email => ({ email })),
+    subject,
+    htmlContent: html,
+  };
+
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': apiKey!,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Brevo API error ${res.status}: ${err}`);
+  }
+
+  const result = await res.json() as { messageId?: string };
+  console.log('Email sent via Brevo API, messageId:', result.messageId);
 }
 
 export async function sendDeleteAlert(deletedReviews: {
@@ -83,12 +103,7 @@ export async function sendDeleteAlert(deletedReviews: {
     </html>
   `;
 
-  await transporter.sendMail({
-    from: `"${process.env.BREVO_FROM_NAME}" <${process.env.BREVO_FROM_EMAIL}>`,
-    to: recipients.join(','),
-    subject: `⚠️ Esvita Clinic — ${platformLabel}: ${deletedReviews.length} yorum silindi`,
-    html,
-  });
+  await sendEmail(recipients, `⚠️ Esvita Clinic — ${platformLabel}: ${deletedReviews.length} yorum silindi`, html);
 }
 
 export async function sendModificationAlert(
@@ -144,12 +159,7 @@ export async function sendModificationAlert(
     </body></html>
   `;
 
-  await transporter.sendMail({
-    from: `"${process.env.BREVO_FROM_NAME}" <${process.env.BREVO_FROM_EMAIL}>`,
-    to: recipients.join(','),
-    subject: `✏️ Esvita Clinic — ${platformLabel}: ${modifiedReviews.length} yorum değiştirildi`,
-    html,
-  });
+  await sendEmail(recipients, `✏️ Esvita Clinic — ${platformLabel}: ${modifiedReviews.length} yorum değiştirildi`, html);
 }
 
 type ReviewRow = { reviewer_name: string; rating: number; review_text: string };
@@ -280,10 +290,5 @@ export async function sendWeeklySummary(stats: {
     </html>
   `;
 
-  await transporter.sendMail({
-    from: `"${process.env.BREVO_FROM_NAME}" <${process.env.BREVO_FROM_EMAIL}>`,
-    to: recipients.join(','),
-    subject: `📊 Esvita Clinic — Haftalık Yorum Özeti (${stats.weekStart} – ${stats.weekEnd})`,
-    html,
-  });
+  await sendEmail(recipients, `📊 Esvita Clinic — Haftalık Yorum Özeti (${stats.weekStart} – ${stats.weekEnd})`, html);
 }
