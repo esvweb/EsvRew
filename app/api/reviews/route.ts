@@ -24,6 +24,8 @@ export async function GET(req: NextRequest) {
   const rating = searchParams.get('rating') || '';
   const search = searchParams.get('search') || '';
   const platform = searchParams.get('platform') || '';
+  const dateFrom = searchParams.get('date_from') || '';
+  const dateTo = searchParams.get('date_to') || '';
   const page = Math.max(1, Number(searchParams.get('page') || '1'));
   const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') || '50')));
   const offset = (page - 1) * limit;
@@ -35,6 +37,17 @@ export async function GET(req: NextRequest) {
   if (status === 'online' || status === 'deleted') {
     conditions.push(`status = $${idx++}`);
     params.push(status);
+  }
+  // Date range: filter by first_seen_date (new reviews) OR deleted_date in range
+  if (dateFrom) {
+    conditions.push(`(first_seen_date >= $${idx} OR (deleted_date IS NOT NULL AND deleted_date >= $${idx}))`);
+    params.push(dateFrom);
+    idx++;
+  }
+  if (dateTo) {
+    conditions.push(`(first_seen_date <= $${idx} OR (deleted_date IS NOT NULL AND deleted_date <= $${idx}))`);
+    params.push(dateTo);
+    idx++;
   }
   if (rating && !isNaN(Number(rating))) {
     conditions.push(`rating = $${idx++}`);

@@ -91,6 +91,67 @@ export async function sendDeleteAlert(deletedReviews: {
   });
 }
 
+export async function sendModificationAlert(
+  modifiedReviews: { reviewer_name: string; rating: number; review_text: string; old_rating: number; old_text: string }[],
+  platform: string = 'google'
+) {
+  const recipients = await getAllUserEmails();
+  if (recipients.length === 0) return;
+
+  const platformLabel = platform === 'trustpilot' ? 'Trustpilot' : 'Google';
+  const today = new Date().toLocaleDateString('tr-TR', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  const rows = modifiedReviews.map(r => `
+    <tr style="border-bottom:1px solid #f0f0f0;">
+      <td style="padding:8px 12px;font-weight:500;">${r.reviewer_name}</td>
+      <td style="padding:8px 12px;text-align:center;">
+        <div style="color:#999;font-size:11px;">Önce</div>
+        <div style="color:#f59e0b;">${'★'.repeat(r.old_rating)}${'☆'.repeat(5 - r.old_rating)}</div>
+        <div style="color:#999;font-size:11px;margin-top:4px;">Sonra</div>
+        <div style="color:#f59e0b;">${'★'.repeat(r.rating)}${'☆'.repeat(5 - r.rating)}</div>
+      </td>
+      <td style="padding:8px 12px;font-size:12px;">
+        ${r.old_text !== r.review_text ? `
+          <div style="color:#999;margin-bottom:4px;"><em>Eski:</em> ${(r.old_text || '').slice(0, 100)}${(r.old_text || '').length > 100 ? '…' : ''}</div>
+          <div style="color:#333;"><em>Yeni:</em> ${(r.review_text || '').slice(0, 100)}${(r.review_text || '').length > 100 ? '…' : ''}</div>
+        ` : '<div style="color:#888;">Yalnızca puan değişti</div>'}
+      </td>
+    </tr>
+  `).join('');
+
+  const html = `
+    <!DOCTYPE html><html><head><meta charset="utf-8"></head>
+    <body style="font-family:Arial,sans-serif;max-width:700px;margin:0 auto;padding:20px;background:#f9f9f9;">
+      <div style="background:#fff;border-radius:8px;padding:30px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+        <div style="border-left:4px solid #f59e0b;padding-left:16px;margin-bottom:24px;">
+          <h2 style="color:#f59e0b;margin:0 0 4px 0;">✏️ ${platformLabel} Yorumu Değiştirildi</h2>
+          <p style="color:#666;margin:0;">Esvita Clinic — ${today}</p>
+        </div>
+        <p style="color:#333;font-size:15px;">
+          <strong>${modifiedReviews.length} yorum</strong> içerik veya puan değişikliği tespit edildi.
+        </p>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#f8f8f8;">
+              <th style="padding:9px 12px;text-align:left;color:#555;font-weight:600;">İsim</th>
+              <th style="padding:9px 12px;text-align:center;color:#555;font-weight:600;">Puan</th>
+              <th style="padding:9px 12px;text-align:left;color:#555;font-weight:600;">Değişiklik</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </body></html>
+  `;
+
+  await transporter.sendMail({
+    from: `"${process.env.BREVO_FROM_NAME}" <${process.env.BREVO_FROM_EMAIL}>`,
+    to: recipients.join(','),
+    subject: `✏️ Esvita Clinic — ${platformLabel}: ${modifiedReviews.length} yorum değiştirildi`,
+    html,
+  });
+}
+
 type ReviewRow = { reviewer_name: string; rating: number; review_text: string };
 
 function stars(n: number) {

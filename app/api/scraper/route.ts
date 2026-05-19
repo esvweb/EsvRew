@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import sql from '@/lib/db';
-import { sendDeleteAlert } from '@/lib/email';
+import { sendDeleteAlert, sendModificationAlert } from '@/lib/email';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,18 +53,57 @@ export async function POST(req: NextRequest) {
     console.warn(`Skipping deletion check [${platform}]: today=${todayIds.length}, yesterday=${yesterdayIds.length}`);
   }
 
+  const modifiedReviews: { reviewer_name: string; rating: number; review_text: string; old_rating: number; old_text: string }[] = [];
+
   for (const review of reviews) {
     if (newIds.includes(review.review_id)) {
+      // New review — insert
       await sql`
         INSERT INTO reviews (review_id, reviewer_name, rating, review_text, first_seen_date, last_seen_date, status, platform)
         VALUES (${review.review_id}, ${review.reviewer_name ?? null}, ${review.rating}, ${review.review_text ?? null}, ${today}, ${today}, 'online', ${platform})
         ON CONFLICT (review_id) DO UPDATE SET last_seen_date = ${today}, status = 'online'
       `;
     } else {
-      await sql`
-        UPDATE reviews SET last_seen_date = ${today}, status = 'online', deleted_date = NULL
-        WHERE review_id = ${review.review_id}
+      // Existing review — check for modifications
+      const existing = await sql`
+        SELECT rating, review_text FROM reviews WHERE review_id = ${review.review_id}
       `;
+
+      if (existing.length > 0) {
+        const old = existing[0];
+        const textChanged = review.review_text && old.review_text && review.review_text !== old.review_text;
+        const ratingChanged = review.rating !== old.rating;
+
+        if (textChanged || ratingChanged) {
+          // Record modification: save original values on first modification only
+          await sql`
+            UPDATE reviews SET
+              last_seen_date = ${today},
+              status = 'online',
+              deleted_date = NULL,
+              rating = ${review.rating},
+              review_text = ${review.review_text ?? null},
+              modified_date = ${today},
+              original_text = COALESCE(original_text, ${old.review_text}),
+              original_rating = COALESCE(original_rating, ${old.rating})
+            WHERE review_id = ${review.review_id}
+          `;
+
+          modifiedReviews.push({
+            reviewer_name: review.reviewer_name || 'Anonim',
+            rating: review.rating,
+            review_text: review.review_text || '',
+            old_rating: Number(old.rating),
+            old_text: old.review_text || '',
+          });
+        } else {
+          // No change — just update last_seen_date
+          await sql`
+            UPDATE reviews SET last_seen_date = ${today}, status = 'online', deleted_date = NULL
+            WHERE review_id = ${review.review_id}
+          `;
+        }
+      }
     }
   }
 
@@ -82,13 +121,13 @@ export async function POST(req: NextRequest) {
     SET review_ids = ${todayIds}, total_count = ${todayIds.length}
   `;
 
+  // Send deletion alert
   if (deletedIds.length > 0) {
     const deletedRows = await sql`
       SELECT reviewer_name, rating, review_text FROM reviews WHERE review_id = ANY(${deletedIds})
     `;
     const onlineCount = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = 'online' AND platform = ${platform}`;
     const deletedCount = await sql`SELECT COUNT(*) as c FROM reviews WHERE status = 'deleted' AND platform = ${platform}`;
-
     try {
       await sendDeleteAlert(
         deletedRows as { reviewer_name: string; rating: number; review_text: string }[],
@@ -96,14 +135,20 @@ export async function POST(req: NextRequest) {
         Number(deletedCount[0].c),
         platform
       );
-    } catch (e) {
-      console.error('Email send failed:', e);
-    }
+    } catch (e) { console.error('Delete email failed:', e); }
+  }
+
+  // Send modification alert
+  if (modifiedReviews.length > 0) {
+    try {
+      await sendModificationAlert(modifiedReviews, platform);
+    } catch (e) { console.error('Modification email failed:', e); }
   }
 
   return NextResponse.json({
     new: newIds.length,
     deleted: deletedIds.length,
+    modified: modifiedReviews.length,
     total: todayIds.length,
     platform,
   });
